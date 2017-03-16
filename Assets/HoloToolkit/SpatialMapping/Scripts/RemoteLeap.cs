@@ -18,11 +18,21 @@ public class RemoteLeap : MonoBehaviour {
     bool optimizeHMD = true;
     bool focused = true;
     //string connection = "ws://localhost:6437/v6.json";
-    string connection = "ws://192.168.0.10:6437/v6.json";
+    //string connection = "ws://192.168.0.10:6437/v6.json"; // Stationær
+    string connection = "ws://192.168.0.15:6437/v6.json"; // Bærbar
+    //string connection = "ws://127.0.0.1:6437/v6.json";
     //string connection = "ws://192.168.137.1:6437/v6.json";
     public GameObject text;
+    public Text QueueCounter;
     private Text textcomp;
     private string debug = "Start debugging";
+
+    private Queue<RootObject> _leapData = new Queue<RootObject>();
+    private object _leapDataLock = new object();
+
+
+    public Slider slider;
+    public GameObject cube;
 
     // Use this for initialization
     void Start () {
@@ -72,6 +82,7 @@ public class RemoteLeap : MonoBehaviour {
             debug = ex.Message;
             //Add code here to handle any exceptions
             Debug.Log(ex.Message);
+            System.Diagnostics.Debug.WriteLine(ex.Message);
         }
 
     }
@@ -92,29 +103,55 @@ public class RemoteLeap : MonoBehaviour {
 
     private async void WebSock_MessageReceived(MessageWebSocket sender, MessageWebSocketMessageReceivedEventArgs args){
 
-         DataReader messageReader = args.GetDataReader();
-         messageReader.UnicodeEncoding = UnicodeEncoding.Utf8;
-         string messageString = messageReader.ReadString(messageReader.UnconsumedBufferLength);
+        DataReader messageReader = args.GetDataReader();
+        messageReader.UnicodeEncoding = UnicodeEncoding.Utf8;
+        string messageString = messageReader.ReadString(messageReader.UnconsumedBufferLength);
 
-         //JsonObject jsonObject = JsonObject.Parse(messageString);
+        //JsonObject jsonObject = JsonObject.Parse(messageString);
 
-         //Debug.WriteLine(jsonObject.ToString());
-         //Debug.WriteLine(messageString);
+        //Debug.WriteLine(jsonObject.ToString());
+        //Debug.WriteLine(messageString);
 
-         //messageString = jsonObject.GetNamedValue("version").ToString();
-         //JToken leapmessage = JObject.Parse(messageString);
+        //messageString = jsonObject.GetNamedValue("version").ToString();
+        //JToken leapmessage = JObject.Parse(messageString);
 
-         //var test = leapmessage.Value<string>("version") ?? "100";
-         //Debug.WriteLine(test);
+        //var test = leapmessage.Value<string>("version") ?? "100";
+        //Debug.WriteLine(test);
          
-         var check = JsonUtility.FromJson<LeapData>(messageString);
+        var check = JsonUtility.FromJson<RootObject>(messageString);
 
-         System.Diagnostics.Debug.WriteLine(check);
+        
+        System.Diagnostics.Debug.WriteLine(check);
 
-        //         debug = messageString;
-        debug = "r: " + check.r + " s: " + check.s + " hands: " + check.hands;
+        debug = "# of Hands: " + check.hands.Count + "\n";
+        debug += "¤ of pointables: " + check.pointables.Count + "\n";
+        debug += " Position of tip with type = 1: ";
+
+        try
+        {            
+            foreach(Pointable e in check.pointables)
+            {
+                if(e.type == 1)
+                {
+                    var tip = e.tipPosition;
+                    debug += " X = " + tip[0] + " Y = " + tip[1] + " Z = " + tip[2];
+                    break;
+                }
+            }
+        }catch(Exception e)
+        {
+            Debug.Log(e.Message);
+        }
+
+        if(check.hands.Count > 0){
+            lock( _leapDataLock)
+            {
+                _leapData.Enqueue(check);
+            }
+        }
 
     }
+
 #endif
 
 
@@ -124,94 +161,110 @@ public class RemoteLeap : MonoBehaviour {
         // Update the hololens text!
         textcomp.text = debug;
 
-	}
+        // Dequeue
+        RootObject obj = null;
 
-    [Serializable]
-    public class LeapData{
+        lock (_leapDataLock)
+        {
+            if (_leapData.Count > 0) obj = _leapData.Dequeue();
+            else obj = null;
+            QueueCounter.text = "Queue Msgs: " + _leapData.Count;            
+        }
 
-        public float currentFrameRate;
-        public float id;
-        public float r;
-        public float s;
+        if(obj != null)
+        {
+            foreach (Pointable e in obj.pointables)
+            {
+                if (e.type == 1)
+                {
+                    var tip = e.tipPosition;
+                    //cube.transform.position = new Vector3((float)tip[0], (float)tip[1], (float)tip[2]);
+                    //cube.transform.Rotate(0, (float)(tip[1] / 10), 0);
 
-        public List<gesture> gestures;
-        public List<hand> hands;
-        public interactionBox interactionBox;
-        public List<pointable> pointables;
+                    cube.transform.rotation = Quaternion.AngleAxis((float)tip[0], Vector3.up);    
+
+                }
+            }
+
+        }
+
 
     }
 
-    [Serializable]
-    public class gesture{
-
-        public Vector3 center; // Circle
-        public Vector3 direction;
-        public int duration; // Microsconds
-        public List<int> handIds;
+    [Serializable] 
+    public class Hand
+    {
+        public List<List<double>> armBasis;
+        public double armWidth;
+        public double confidence;
+        public List<double> direction;
+        public List<double> elbow;
+        public double grabAngle;
+        public double grabStrength;
         public int id;
-        public List<float> normal;
-        public List<int> pointtableIds;
-        public Vector3 position;
-        public float progress;
-        public float radius;
-        public float speed;
-        public Vector3 startPosition;
-        public string state;
+        public List<double> palmNormal;
+        public List<double> palmPosition;
+        public List<double> palmVelocity;
+        public double palmWidth;
+        public double pinchDistance;
+        public double pinchStrength;
+        public List<List<double>> r;
+        public double s;
+        public List<double> sphereCenter;
+        public double sphereRadius;
+        public List<double> stabilizedPalmPosition;
+        public List<double> t;
+        public double timeVisible;
         public string type;
-
+        public List<double> wrist;
     }
 
     [Serializable]
-    public class hand{
-
-        public List<Vector3> arms;
-        public float armWidth;
-        public float confidence;
-        public Vector3 direction;
-        public Vector3 elbow;
-        public float grabStrength;
-        public int id;
-        public Vector3 palmNormal;
-        public Vector3 palmPosition;
-        public Vector3 palmVelocity;
-        public float pinchStrength;
-        public Matrix4x4 r;
-        public float s;
-        public Vector3 sphereCenter;
-        public float sphereRadius;
-        public Vector3 stabilizedPalmPosition;
-        public Vector3 t;
-        public float timeVisible;
-        public string type;
-        public Vector3 wrist;
+    public class InteractionBox
+    {
+        public List<double> center;
+        public List<double> size;
     }
 
-    public class interactionBox{
-        public Vector3 center;
-        public Vector3 size;
-    }
-
-    public class pointable{
-        public List<Vector3> bases;
-        public Vector3 btipPosition;
-        public Vector3 carpPosition;
-        public Vector3 dipPosition;
-        public Vector3 direction;
+    [Serializable]
+    public class Pointable
+    {
+        public List<List<List<double>>> bases;
+        public List<double> btipPosition;
+        public List<double> carpPosition;
+        public List<double> dipPosition;
+        public List<double> direction;
+        public bool extended;
         public int handId;
         public int id;
-        public float length;
-        public Vector3 mcPosition;
-        public Vector3 pipPosition;
-        public Vector3 stabilizedTipPosition;
-        public float timeVisble;
-        public Vector3 tipPosition;
-        public Vector3 tipVelocity;
+        public double length;
+        public List<double> mcpPosition;
+        public List<double> pipPosition;
+        public List<double> stabilizedTipPosition;
+        public double timeVisible;
+        public List<double> tipPosition;
+        public List<double> tipVelocity;
         public bool tool;
-        public float touchDistance;
+        public double touchDistance;
         public string touchZone;
         public int type;
-        public float width;
+        public double width;
+    }
 
+    [Serializable]
+    public class RootObject
+    {
+        public double currentFrameRate;
+        public List<object> devices;
+        public List<object> gestures;
+        public List<Hand> hands;
+        public int id;
+        public InteractionBox interactionBox;
+        public List<Pointable> pointables;
+        public List<List<double>> r;
+        public double s;
+        public List<double> t;
+        public long timestamp;
     }
 
 }
