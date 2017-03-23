@@ -4,12 +4,15 @@ using System;
 using UnityEngine;
 using UnityEngine.UI;
 
+
 // Check it is hololens and proceed with the operations!
 #if !UNITY_EDITOR && UNITY_METRO
 using System.Threading.Tasks;
 using Windows.Networking.Sockets;
 using Windows.Storage.Streams;
+using System.Collections.Concurrent;
 #endif
+
 
 public class RemoteLeap : MonoBehaviour {
 
@@ -26,18 +29,27 @@ public class RemoteLeap : MonoBehaviour {
     public Text QueueCounter;
     private Text textcomp;
     private string debug = "Start debugging";
+    private long timestamp = 0;
 
-    private Queue<RootObject> _leapData = new Queue<RootObject>();
+    //private Queue<RootObject> _leapData = new Queue<RootObject>();
     private object _leapDataLock = new object();
 
+#if !UNITY_EDITOR && UNITY_METRO
+    //ConcurrentQueue<RootObject> _leapData = new ConcurrentQueue<RootObject>();
+    ConcurrentStack<RootObject> _leapData = new ConcurrentStack<RootObject>();
+#endif
 
     public Slider slider;
     public GameObject cube;
 
+    float t;
+
     // Use this for initialization
     void Start () {
 
-        textcomp = text.GetComponent<Text>();
+    RootObjectRecieved += IfRootObjectRecieved;
+
+    textcomp = text.GetComponent<Text>();
 
 #if !UNITY_EDITOR && UNITY_METRO
         
@@ -144,40 +156,47 @@ public class RemoteLeap : MonoBehaviour {
         }
 
         if(check.hands.Count > 0){
-            lock( _leapDataLock)
-            {
-                _leapData.Enqueue(check);
-            }
+
+            RootObjectRecievedEventArgs arg = new RootObjectRecievedEventArgs();
+            arg.obj = check;
+            onRootObjectRecieved(arg);
+
         }
 
     }
 
 #endif
 
+    int unhandledMessages = 0;
+    float handledMessages = 0;
+    RootObject obj = null;
 
     // Update is called once per frame
     void FixedUpdate () {
 
+        t += Time.deltaTime;
+
         // Update the hololens text!
         textcomp.text = debug;
 
-        // Dequeue
-        RootObject obj = null;
 
-        lock (_leapDataLock)
-        {
-            if (_leapData.Count > 0) obj = _leapData.Dequeue();
-            else obj = null;
-            QueueCounter.text = "Queue Msgs: " + _leapData.Count;            
-        }
+#if !UNITY_EDITOR && UNITY_METRO
+        //_leapData.TryDequeue(out obj);
+        _leapData.TryPop(out obj);
+        unhandledMessages = _leapData.Count;
+#endif
 
-        if(obj != null)
+
+        QueueCounter.text = "Queue Msgs:                 " + unhandledMessages + "\n";
+        QueueCounter.text += "Handledmessages / seconds: " + (handledMessages / t);
+
+        if (obj != null)
         {
             foreach (Pointable e in obj.pointables)
             {
                 if (e.type == 1)
                 {
-                    var tip = e.tipPosition;
+                    var tip = e.stabilizedTipPosition;
                     //cube.transform.position = new Vector3((float)tip[0], (float)tip[1], (float)tip[2]);
                     //cube.transform.Rotate(0, (float)(tip[1] / 10), 0);
 
@@ -186,7 +205,28 @@ public class RemoteLeap : MonoBehaviour {
                 }
             }
 
+            handledMessages += 1;
         }
+
+
+    }
+
+    public void IfRootObjectRecieved(System.Object sender, RootObjectRecievedEventArgs e)
+    {
+     
+        if(timestamp == 0)
+        {
+            timestamp = e.obj.timestamp;
+        }
+
+        if(timestamp < e.obj.timestamp)
+        {
+            #if !UNITY_EDITOR && UNITY_METRO
+                 //_leapData.Enqueue(e.obj);
+                _leapData.Push(e.obj);
+            #endif
+        }
+
 
 
     }
@@ -267,4 +307,21 @@ public class RemoteLeap : MonoBehaviour {
         public long timestamp;
     }
 
+    protected void onRootObjectRecieved(RootObjectRecievedEventArgs e)
+    {
+        EventHandler<RootObjectRecievedEventArgs> handler = RootObjectRecieved;
+        if(handler != null)
+        {
+            handler(this, e);
+        }
+    }
+
+    public event EventHandler<RootObjectRecievedEventArgs> RootObjectRecieved;
+
 }
+
+    public class RootObjectRecievedEventArgs : EventArgs
+    {
+        public RemoteLeap.RootObject obj { get; set; }
+
+    }
